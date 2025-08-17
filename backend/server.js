@@ -5,6 +5,7 @@ const socketIo = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const journalRoutes = require('./routes/journal');
 require('dotenv').config();
 
 const app = express();
@@ -23,16 +24,25 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Rate limiting
+// 🔧 UPDATED: More generous rate limiting for development
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: 1 * 60 * 1000, // 1 minute (reduced from 15 minutes)
+  max: 200, // 200 requests per minute (increased from 100 per 15 minutes)
+  message: {
+    error: 'Too many requests. Please wait a moment before trying again.',
+    retryAfter: 60
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
-app.use(limiter);
+
+// Apply rate limiting only to API routes (not to static files)
+app.use('/api/', limiter);
 
 // Routes
 app.use('/api/chat', require('./routes/chat'));
 app.use('/api/ai', require('./routes/ai'));
+app.use('/api/journal', journalRoutes);
 
 // Basic health check
 app.get('/api/health', (req, res) => {
@@ -74,6 +84,7 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-  console.log(` Sahara server running on port ${PORT}`);
-  console.log(` Frontend should connect to: http://localhost:${PORT}`);
+  console.log(`🌟 Sahara server running on port ${PORT}`);
+  console.log(`🔗 Frontend should connect to: http://localhost:${PORT}`);
+  console.log('✅ Rate limiting: 200 requests per minute per IP');
 });

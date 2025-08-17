@@ -1,6 +1,7 @@
 // frontend/src/components/MoodTracker.jsx
-import React, { useState, useEffect, useCallback } from 'react';
-import { Heart, TrendingUp, AlertTriangle, Phone, Book, Users } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { TrendingUp, Heart, MessageSquare, Activity, RefreshCw } from 'lucide-react';
+import { getMoodInfo } from '../utils/moodMapping';
 
 const BACKEND_URL = 'http://localhost:3001';
 
@@ -8,235 +9,320 @@ function MoodTracker({ sessionId }) {
   const [moodData, setMoodData] = useState({
     mood: 'neutral',
     riskLevel: 'low',
-    messageCount: 0
+    messages: 0,
+    moodHistory: []
   });
+  const [isLoading, setIsLoading] = useState(false);
   const [showResources, setShowResources] = useState(false);
 
-  // Enhanced mood fetching with real-time updates
-  const fetchMoodData = useCallback(async () => {
-    if (!sessionId) return;
-    
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/chat/${sessionId}/mood`);
-      const data = await response.json();
-      
-      if (data.success) {
-        setMoodData({
-          mood: data.mood,
-          riskLevel: data.riskLevel,
-          messageCount: data.messageCount
-        });
-        
-        // Console log for debugging
-        console.log('🎭 Live Mood Update:', {
-          mood: data.mood,
-          risk: data.riskLevel,
-          messages: data.messageCount
-        });
-      }
-    } catch (error) {
-      console.error('Error fetching mood data:', error);
-    }
-  }, [sessionId]);
-
+  // 🔧 ENHANCED: More aggressive real-time updates with localStorage check
   useEffect(() => {
     if (sessionId) {
       fetchMoodData();
-      // Poll every 3 seconds for real-time updates
-      const interval = setInterval(fetchMoodData, 3000);
+      
+      // Fetch data every 2 seconds for real-time updates
+      const interval = setInterval(() => {
+        fetchMoodData();
+      }, 2000);
+
       return () => clearInterval(interval);
     }
-  }, [sessionId, fetchMoodData]);
+  }, [sessionId]);
 
-  const getMoodColor = (mood) => {
-    switch (mood) {
-      case 'happy': return 'text-green-600 bg-green-100 border-green-200';
-      case 'sad': return 'text-red-600 bg-red-100 border-red-200';
-      case 'anxious': return 'text-yellow-600 bg-yellow-100 border-yellow-200';
-      case 'angry': return 'text-orange-600 bg-orange-100 border-orange-200';
-      default: return 'text-blue-600 bg-blue-100 border-blue-200';
+  // 🔧 COMPLETELY UPDATED: Enhanced data fetching with localStorage fallback
+  const fetchMoodData = async () => {
+    if (!sessionId) return;
+    
+    setIsLoading(true);
+    try {
+      // Get real message count from localStorage first
+      const getLocalMessageCount = () => {
+        try {
+          const storedMessages = JSON.parse(localStorage.getItem('sahara-messages') || '[]');
+          return storedMessages.length;
+        } catch {
+          return 0;
+        }
+      };
+
+      const localMessageCount = getLocalMessageCount();
+
+      // Try multiple endpoints for comprehensive data
+      const [moodResponse, messagesResponse] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/chat/${sessionId}/mood`).catch(() => null),
+        fetch(`${BACKEND_URL}/api/chat/${sessionId}/messages`).catch(() => null)
+      ]);
+
+      let updatedData = { ...moodData };
+
+      // Get mood data from API
+      if (moodResponse && moodResponse.ok) {
+        const moodResult = await moodResponse.json();
+        console.log('📊 Mood API response:', moodResult);
+        
+        if (moodResult.success || moodResult.mood) {
+          updatedData.mood = moodResult.mood || updatedData.mood;
+          updatedData.riskLevel = moodResult.riskLevel || updatedData.riskLevel;
+          updatedData.moodHistory = moodResult.moodHistory || updatedData.moodHistory;
+        }
+      }
+
+      // Get message count from messages API or localStorage
+      if (messagesResponse && messagesResponse.ok) {
+        const messagesResult = await messagesResponse.json();
+        console.log('💬 Messages API response:', messagesResult);
+        
+        if (messagesResult.success && messagesResult.messages) {
+          updatedData.messages = messagesResult.messages.length;
+        } else {
+          updatedData.messages = localMessageCount;
+        }
+      } else {
+        // Fallback to localStorage count
+        updatedData.messages = localMessageCount;
+      }
+
+      // Always ensure we have the latest localStorage count
+      const currentLocalCount = getLocalMessageCount();
+      if (currentLocalCount > updatedData.messages) {
+        updatedData.messages = currentLocalCount;
+      }
+
+      setMoodData(updatedData);
+      console.log('📊 Final mood data:', updatedData);
+
+    } catch (error) {
+      console.error('Error fetching mood data:', error);
+      
+      // Even on error, try to get localStorage message count
+      try {
+        const storedMessages = JSON.parse(localStorage.getItem('sahara-messages') || '[]');
+        setMoodData(prev => ({
+          ...prev,
+          messages: storedMessages.length
+        }));
+      } catch (e) {
+        console.error('Error reading localStorage:', e);
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const getMoodEmoji = (mood) => {
-    switch (mood) {
-      case 'happy': return '😊';
-      case 'sad': return '😢';
-      case 'anxious': return '😰';
-      case 'angry': return '😠';
-      default: return '😐';
-    }
+  // Manual refresh function
+  const handleRefresh = () => {
+    fetchMoodData();
   };
 
   const getRiskLevelColor = (level) => {
-    switch (level) {
-      case 'high': return 'text-red-700 bg-red-100 border-red-300 animate-pulse';
-      case 'medium': return 'text-yellow-700 bg-yellow-100 border-yellow-300';
-      default: return 'text-green-700 bg-green-100 border-green-300';
+    switch (level?.toLowerCase()) {
+      case 'high': return 'bg-red-100 text-red-700 border-red-200';
+      case 'medium': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+      case 'low': return 'bg-green-100 text-green-700 border-green-200';
+      default: return 'bg-gray-100 text-gray-700 border-gray-200';
     }
   };
 
-  const resources = [
-    {
-      title: 'Crisis Helplines',
-      icon: Phone,
-      items: [
-        'AASRA: 91-22-2754-6669',
-        'Sneha: 91-44-2464-0050',
-        'iCall: 91-22-2556-3291'
-      ]
-    },
-    {
-      title: 'Self-Help Resources',
-      icon: Book,
-      items: [
-        'Breathing exercises',
-        'Mindfulness meditation',
-        'Journaling techniques',
-        'Sleep hygiene tips'
-      ]
-    },
-    {
-      title: 'Support Communities',
-      icon: Users,
-      items: [
-        'Online support groups',
-        'Student counseling centers',
-        'Peer support networks',
-        'Mental health workshops'
-      ]
-    }
-  ];
+  // Mental Health Resources functionality
+  const handleShowResources = () => {
+    setShowResources(!showResources);
+  };
 
-  if (!sessionId) {
-    return (
-      <div className="p-6 text-center text-gray-500">
-        <Heart className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-        <p>Start a conversation to see mood insights</p>
-      </div>
-    );
-  }
+  // Quick Action handlers
+  const handleBreathingExercise = () => {
+    alert('🧘 Starting breathing exercise...\n\n1. Breathe in for 4 counts\n2. Hold for 4 counts\n3. Breathe out for 6 counts\n4. Repeat 5 times');
+  };
+
+  const handleJournalThoughts = () => {
+    // Call parent component to open journal
+    if (window.openJournal) {
+      window.openJournal();
+    } else {
+      alert('📝 Journal feature: Click the "Journal" button in the chat header to start writing!');
+    }
+  };
+
+  const handlePlayMusic = () => {
+    alert('🎵 Playing calming music...\n\nRecommended apps:\n• Calm\n• Headspace\n• Spotify (Lo-fi Hip Hop)\n• YouTube (Nature Sounds)');
+  };
+
+  const handleFindSupport = () => {
+    alert('📞 Mental Health Support in India:\n\n• AASRA: +91-22-2754-6669\n• Sneha: +91-44-2464-0050\n• iCall: +91-22-2556-3291\n• Vandrevala: 1860-266-2345');
+  };
+
+  // 🔧 NEW: Get real-time message count
+  const getRealTimeMessageCount = () => {
+    try {
+      const storedMessages = JSON.parse(localStorage.getItem('sahara-messages') || '[]');
+      return Math.max(storedMessages.length, moodData.messages);
+    } catch {
+      return moodData.messages || 0;
+    }
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Live Mood Insights */}
-      <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl p-6 border">
-        <h3 className="text-lg font-semibold mb-4 flex items-center">
-          <Heart className="w-5 h-5 mr-2 text-purple-600" />
-          Live Mood Insights
-        </h3>
-        
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-600">Current Mood:</span>
-            <div className={`px-3 py-2 rounded-full text-sm font-medium border transition-all ${getMoodColor(moodData.mood)}`}>
-              <span className="text-lg mr-1">{getMoodEmoji(moodData.mood)}</span>
-              {moodData.mood}
-            </div>
+    <div className="h-full flex flex-col bg-white overflow-hidden">
+      {/* Header - Enhanced with refresh button */}
+      <div className="flex-shrink-0 p-4 bg-gradient-to-r from-pink-500 to-purple-600 text-white">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Heart className="w-5 h-5" />
+            <h2 className="font-semibold">Live Mood Insights</h2>
           </div>
-          
-          <div className="flex items-center justify-between">
-            <span className="text-gray-600">Risk Level:</span>
-            <div className={`px-3 py-2 rounded-full text-sm font-medium border transition-all ${getRiskLevelColor(moodData.riskLevel)}`}>
-              {moodData.riskLevel === 'high' && '🚨 '}
-              {moodData.riskLevel === 'medium' && '⚠️ '}
-              {moodData.riskLevel === 'low' && '✅ '}
-              {moodData.riskLevel.toUpperCase()}
-            </div>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <span className="text-gray-600">Messages:</span>
-            <span className="font-medium text-lg">{moodData.messageCount}</span>
-          </div>
-        </div>
-
-        {/* Crisis Alert */}
-        {moodData.riskLevel === 'high' && (
-          <div className="mt-4 p-4 bg-red-50 border-2 border-red-200 rounded-lg animate-pulse">
-            <div className="flex items-start">
-              <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 mr-2 animate-bounce" />
-              <div>
-                <p className="text-red-800 font-bold text-sm">
-                  🚨 CRISIS DETECTED - Immediate Support Available
-                </p>
-                <p className="text-red-700 text-sm mt-1">
-                  AASRA Crisis Helpline: +91-22-2754-6669 (24/7)
-                </p>
-                <p className="text-red-600 text-xs mt-1">
-                  Your life matters. Help is available right now.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Mood Trend Placeholder */}
-      <div className="bg-white rounded-xl p-6 border">
-        <h3 className="text-lg font-semibold mb-4 flex items-center">
-          <TrendingUp className="w-5 h-5 mr-2 text-blue-600" />
-          Mood Trend
-        </h3>
-        <div className="h-32 bg-gray-50 rounded-lg flex items-center justify-center">
-          <p className="text-gray-500 text-sm">
-            {moodData.messageCount > 0 
-              ? `Analyzing conversation patterns... (${moodData.messageCount} messages)`
-              : 'Start chatting to see trends...'
-            }
-          </p>
-        </div>
-      </div>
-
-      {/* Resources Section */}
-      <div className="bg-white rounded-xl p-6 border">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Mental Health Resources</h3>
-          <button
-            onClick={() => setShowResources(!showResources)}
-            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+          <button 
+            onClick={handleRefresh}
+            disabled={isLoading}
+            className="p-1 hover:bg-white hover:bg-opacity-20 rounded"
           >
-            {showResources ? 'Hide' : 'Show'} Resources
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
         </div>
-        
-        {showResources && (
-          <div className="space-y-4">
-            {resources.map((resource, index) => (
-              <div key={index} className="border rounded-lg p-4">
-                <div className="flex items-center mb-2">
-                  <resource.icon className="w-4 h-4 mr-2 text-gray-600" />
-                  <h4 className="font-medium text-gray-800">{resource.title}</h4>
-                </div>
-                <ul className="space-y-1">
-                  {resource.items.map((item, itemIndex) => (
-                    <li key={itemIndex} className="text-sm text-gray-600 ml-6">
-                      • {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
-      {/* Quick Actions */}
-      <div className="bg-white rounded-xl p-6 border">
-        <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
-        <div className="space-y-2">
-          <button className="w-full text-left px-4 py-3 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors text-sm">
-            🧘 Start breathing exercise
+      {/* Content - Scrollable with better spacing */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {/* Current Mood - Enhanced */}
+        <div className="bg-gradient-to-br from-blue-50 to-purple-50 border border-purple-100 rounded-xl p-4 shadow-sm">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Current Mood:</h3>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <span className="text-3xl">{getMoodInfo(moodData.mood).emoji}</span>
+              <span className="font-bold text-lg text-gray-800 capitalize">{moodData.mood}</span>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-gray-500">Status</div>
+              <div className="text-sm font-medium text-purple-600">
+                {sessionId ? 'Active' : 'Waiting...'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Risk Level - Enhanced */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Risk Level:</h3>
+          <div className="flex items-center justify-center">
+            <div className={`inline-flex items-center px-4 py-2 rounded-full border-2 text-sm font-bold ${getRiskLevelColor(moodData.riskLevel)}`}>
+              ✅ {moodData.riskLevel?.toUpperCase() || 'LOW'}
+            </div>
+          </div>
+        </div>
+
+        {/* Messages Count - ENHANCED with real-time localStorage count */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Messages:</h3>
+          <div className="flex items-center justify-center space-x-3">
+            <div className="p-2 bg-blue-100 rounded-full">
+              <MessageSquare className="w-6 h-6 text-blue-600" />
+            </div>
+            <div className="text-center">
+              <span className="text-3xl font-bold text-gray-800 block">
+                {getRealTimeMessageCount()}
+              </span>
+              <span className="text-xs text-gray-500">
+                {isLoading ? 'Updating...' : 'Total messages'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Mood Trend - Enhanced with real data */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center space-x-2 mb-4">
+            <div className="p-1 bg-blue-100 rounded-full">
+              <TrendingUp className="w-4 h-4 text-blue-600" />
+            </div>
+            <h3 className="text-sm font-medium text-gray-700">Mood Trend</h3>
+          </div>
+          
+          {getRealTimeMessageCount() > 0 ? (
+            <div className="text-center py-6">
+              <div className="p-3 bg-gradient-to-br from-blue-100 to-purple-100 rounded-full w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                <Activity className="w-8 h-8 text-blue-600" />
+              </div>
+              <p className="text-sm font-medium text-gray-700 mb-1">
+                Mood: <span className="capitalize text-blue-600">{moodData.mood}</span>
+              </p>
+              <p className="text-xs text-gray-500 mb-2">
+                Based on {getRealTimeMessageCount()} messages
+              </p>
+              <div className="mt-2 h-3 bg-gray-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-500"
+                  style={{ width: `${Math.min((getRealTimeMessageCount() / 10) * 100, 100)}%` }}
+                ></div>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                Progress: {Math.min(getRealTimeMessageCount(), 10)}/10 messages
+              </p>
+            </div>
+          ) : (
+            <div className="text-center py-6">
+              <div className="p-3 bg-gray-100 rounded-full w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                <TrendingUp className="w-8 h-8 text-gray-400" />
+              </div>
+              <p className="text-sm text-gray-500">Start chatting to see trends...</p>
+            </div>
+          )}
+        </div>
+
+        {/* Mental Health Resources - Enhanced with functionality */}
+        <div className="bg-gradient-to-br from-green-50 to-blue-50 border border-green-200 rounded-xl p-4 shadow-sm">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Mental Health Resources</h3>
+          <button 
+            onClick={handleShowResources}
+            className="w-full bg-white hover:bg-gray-50 text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-300 rounded-lg py-2 px-3 text-sm font-medium transition-all duration-200 shadow-sm"
+          >
+            {showResources ? 'Hide Resources' : 'Show Resources'}
           </button>
-          <button className="w-full text-left px-4 py-3 bg-green-50 hover:bg-green-100 rounded-lg transition-colors text-sm">
-            📝 Journal your thoughts
-          </button>
-          <button className="w-full text-left px-4 py-3 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors text-sm">
-            🎵 Play calming music
-          </button>
-          <button className="w-full text-left px-4 py-3 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors text-sm">
-            📞 Find local support
-          </button>
+          
+          {/* Expandable resources section */}
+          {showResources && (
+            <div className="mt-3 pt-3 border-t border-green-200 space-y-2">
+              <div className="text-xs text-gray-600 space-y-1">
+                <p><strong>Crisis Helplines:</strong></p>
+                <p>• AASRA: +91-22-2754-6669</p>
+                <p>• Steve: +91-44-2464-0050</p>
+                <p>• iCall: +91-22-2556-3291</p>
+                <p><strong>Apps:</strong> Calm, Headspace, Sanvello</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Actions - Enhanced with full functionality */}
+        <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-200 rounded-xl p-4 shadow-sm">
+          <h3 className="text-sm font-medium text-gray-700 mb-4">Quick Actions</h3>
+          <div className="space-y-3">
+            <button 
+              onClick={handleBreathingExercise}
+              className="w-full flex items-center space-x-3 bg-white hover:bg-purple-50 text-gray-700 hover:text-purple-700 border border-gray-200 hover:border-purple-300 rounded-lg py-3 px-4 text-sm font-medium transition-all duration-200 shadow-sm"
+            >
+              <span className="text-lg" role="img" aria-label="meditation">🧘</span>
+              <span>Start breathing exercise</span>
+            </button>
+            <button 
+              onClick={handleJournalThoughts}
+              className="w-full flex items-center space-x-3 bg-white hover:bg-purple-50 text-gray-700 hover:text-purple-700 border border-gray-200 hover:border-purple-300 rounded-lg py-3 px-4 text-sm font-medium transition-all duration-200 shadow-sm"
+            >
+              <span className="text-lg" role="img" aria-label="writing">📝</span>
+              <span>Journal your thoughts</span>
+            </button>
+            <button 
+              onClick={handlePlayMusic}
+              className="w-full flex items-center space-x-3 bg-white hover:bg-purple-50 text-gray-700 hover:text-purple-700 border border-gray-200 hover:border-purple-300 rounded-lg py-3 px-4 text-sm font-medium transition-all duration-200 shadow-sm"
+            >
+              <span className="text-lg" role="img" aria-label="music">🎵</span>
+              <span>Play calming music</span>
+            </button>
+            <button 
+              onClick={handleFindSupport}
+              className="w-full flex items-center space-x-3 bg-white hover:bg-purple-50 text-gray-700 hover:text-purple-700 border border-gray-200 hover:border-purple-300 rounded-lg py-3 px-4 text-sm font-medium transition-all duration-200 shadow-sm"
+            >
+              <span className="text-lg" role="img" aria-label="phone">📞</span>
+              <span>Find local support</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

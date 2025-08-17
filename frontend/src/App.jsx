@@ -24,7 +24,7 @@ function App() {
         <HomePage onStartChat={startChat} />
       ) : (
         <div className="flex flex-col h-screen">
-          <header className="bg-white shadow-sm border-b p-4">
+          <header className="bg-white shadow-sm border-b p-4 flex-shrink-0">
             <div className="max-w-4xl mx-auto flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
@@ -41,11 +41,12 @@ function App() {
             </div>
           </header>
           
-          <div className="flex-1 flex max-w-6xl mx-auto w-full">
-            <div className="flex-1 p-4">
+          {/* 🔧 FIXED: Removed border-l to eliminate the ugly black line */}
+          <div className="flex-1 flex min-h-0 p-4 gap-4">
+            <div className="flex-1 min-h-0">
               <ChatInterface sessionId={sessionId} setSessionId={setSessionId} />
             </div>
-            <div className="w-80 p-4 bg-white border-l">
+            <div className="w-80 bg-white rounded-lg shadow-sm p-4">
               <MoodTracker sessionId={sessionId} />
             </div>
           </div>
@@ -70,7 +71,7 @@ function HomePage({ onStartChat }) {
             </h1>
             <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
               Your safe, confidential, and empathetic AI companion for mental wellness. 
-              We're here to listen, support, and guide you through life's challenges.
+              We are here to listen, support, and guide you through challenges.
             </p>
           </div>
 
@@ -107,14 +108,14 @@ function HomePage({ onStartChat }) {
       <footer className="bg-white border-t p-8">
         <div className="max-w-4xl mx-auto text-center">
           <p className="text-gray-600 mb-4">
-            If you're in immediate crisis, please contact:
+            If you are in immediate crisis, please contact:
           </p>
           <div className="flex justify-center space-x-8 text-sm text-gray-700">
             <div>
               <strong>AASRA:</strong> +91 22 2754 6669
             </div>
             <div>
-              <strong>Sneha:</strong> +91 44 2464 0050
+              <strong>Steve:</strong> +91 44 2464 0050
             </div>
             <div>
               <strong>iCall:</strong> +91 22 2556 3291
