@@ -117,3 +117,5 @@ Thumbs.db
 **/config/secrets.*
 .env
 backend/.env
+.env
+backend/.env

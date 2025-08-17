@@ -12,12 +12,27 @@ function MoodTracker({ sessionId }) {
   });
   const [showResources, setShowResources] = useState(false);
 
+  // Enhanced mood fetching with real-time updates
   const fetchMoodData = useCallback(async () => {
+    if (!sessionId) return;
+    
     try {
       const response = await fetch(`${BACKEND_URL}/api/chat/${sessionId}/mood`);
       const data = await response.json();
+      
       if (data.success) {
-        setMoodData(data);
+        setMoodData({
+          mood: data.mood,
+          riskLevel: data.riskLevel,
+          messageCount: data.messageCount
+        });
+        
+        // Console log for debugging
+        console.log('🎭 Live Mood Update:', {
+          mood: data.mood,
+          risk: data.riskLevel,
+          messages: data.messageCount
+        });
       }
     } catch (error) {
       console.error('Error fetching mood data:', error);
@@ -27,18 +42,19 @@ function MoodTracker({ sessionId }) {
   useEffect(() => {
     if (sessionId) {
       fetchMoodData();
-      const interval = setInterval(fetchMoodData, 10000); // Update every 10 seconds
+      // Poll every 3 seconds for real-time updates
+      const interval = setInterval(fetchMoodData, 3000);
       return () => clearInterval(interval);
     }
   }, [sessionId, fetchMoodData]);
 
   const getMoodColor = (mood) => {
     switch (mood) {
-      case 'happy': return 'text-green-600 bg-green-100';
-      case 'sad': return 'text-red-600 bg-red-100';
-      case 'anxious': return 'text-yellow-600 bg-yellow-100';
-      case 'angry': return 'text-orange-600 bg-orange-100';
-      default: return 'text-blue-600 bg-blue-100';
+      case 'happy': return 'text-green-600 bg-green-100 border-green-200';
+      case 'sad': return 'text-red-600 bg-red-100 border-red-200';
+      case 'anxious': return 'text-yellow-600 bg-yellow-100 border-yellow-200';
+      case 'angry': return 'text-orange-600 bg-orange-100 border-orange-200';
+      default: return 'text-blue-600 bg-blue-100 border-blue-200';
     }
   };
 
@@ -54,9 +70,9 @@ function MoodTracker({ sessionId }) {
 
   const getRiskLevelColor = (level) => {
     switch (level) {
-      case 'high': return 'text-red-600 bg-red-100';
-      case 'medium': return 'text-yellow-600 bg-yellow-100';
-      default: return 'text-green-600 bg-green-100';
+      case 'high': return 'text-red-700 bg-red-100 border-red-300 animate-pulse';
+      case 'medium': return 'text-yellow-700 bg-yellow-100 border-yellow-300';
+      default: return 'text-green-700 bg-green-100 border-green-300';
     }
   };
 
@@ -103,44 +119,52 @@ function MoodTracker({ sessionId }) {
 
   return (
     <div className="space-y-6">
-      {/* Current Mood */}
-      <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl p-6">
+      {/* Live Mood Insights */}
+      <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl p-6 border">
         <h3 className="text-lg font-semibold mb-4 flex items-center">
           <Heart className="w-5 h-5 mr-2 text-purple-600" />
-          Mood Insights
+          Live Mood Insights
         </h3>
         
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-gray-600">Current Mood:</span>
-            <div className={`px-3 py-1 rounded-full text-sm font-medium ${getMoodColor(moodData.mood)}`}>
-              {getMoodEmoji(moodData.mood)} {moodData.mood}
+            <div className={`px-3 py-2 rounded-full text-sm font-medium border transition-all ${getMoodColor(moodData.mood)}`}>
+              <span className="text-lg mr-1">{getMoodEmoji(moodData.mood)}</span>
+              {moodData.mood}
             </div>
           </div>
           
           <div className="flex items-center justify-between">
             <span className="text-gray-600">Risk Level:</span>
-            <div className={`px-3 py-1 rounded-full text-sm font-medium ${getRiskLevelColor(moodData.riskLevel)}`}>
-              {moodData.riskLevel}
+            <div className={`px-3 py-2 rounded-full text-sm font-medium border transition-all ${getRiskLevelColor(moodData.riskLevel)}`}>
+              {moodData.riskLevel === 'high' && '🚨 '}
+              {moodData.riskLevel === 'medium' && '⚠️ '}
+              {moodData.riskLevel === 'low' && '✅ '}
+              {moodData.riskLevel.toUpperCase()}
             </div>
           </div>
           
           <div className="flex items-center justify-between">
             <span className="text-gray-600">Messages:</span>
-            <span className="font-medium">{moodData.messageCount}</span>
+            <span className="font-medium text-lg">{moodData.messageCount}</span>
           </div>
         </div>
 
+        {/* Crisis Alert */}
         {moodData.riskLevel === 'high' && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="mt-4 p-4 bg-red-50 border-2 border-red-200 rounded-lg animate-pulse">
             <div className="flex items-start">
-              <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 mr-2" />
+              <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 mr-2 animate-bounce" />
               <div>
-                <p className="text-red-800 font-medium text-sm">
-                  We're concerned about you
+                <p className="text-red-800 font-bold text-sm">
+                  🚨 CRISIS DETECTED - Immediate Support Available
                 </p>
                 <p className="text-red-700 text-sm mt-1">
-                  Please consider reaching out to a crisis helpline or trusted person immediately.
+                  AASRA Crisis Helpline: +91-22-2754-6669 (24/7)
+                </p>
+                <p className="text-red-600 text-xs mt-1">
+                  Your life matters. Help is available right now.
                 </p>
               </div>
             </div>
@@ -155,14 +179,19 @@ function MoodTracker({ sessionId }) {
           Mood Trend
         </h3>
         <div className="h-32 bg-gray-50 rounded-lg flex items-center justify-center">
-          <p className="text-gray-500 text-sm">Trend chart coming soon...</p>
+          <p className="text-gray-500 text-sm">
+            {moodData.messageCount > 0 
+              ? `Analyzing conversation patterns... (${moodData.messageCount} messages)`
+              : 'Start chatting to see trends...'
+            }
+          </p>
         </div>
       </div>
 
       {/* Resources Section */}
       <div className="bg-white rounded-xl p-6 border">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Resources</h3>
+          <h3 className="text-lg font-semibold">Mental Health Resources</h3>
           <button
             onClick={() => setShowResources(!showResources)}
             className="text-blue-600 hover:text-blue-700 text-sm font-medium"
