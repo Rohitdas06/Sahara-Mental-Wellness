@@ -115,7 +115,7 @@ function HomePage({ onStartChat }) {
               <strong>AASRA:</strong> +91 22 2754 6669
             </div>
             <div>
-              <strong>Steve:</strong> +91 44 2464 0050
+              <strong>Champak:</strong> +91 44 2464 0050
             </div>
             <div>
               <strong>iCall:</strong> +91 22 2556 3291

@@ -282,7 +282,7 @@ function MoodTracker({ sessionId }) {
               <div className="text-xs text-gray-600 space-y-1">
                 <p><strong>Crisis Helplines:</strong></p>
                 <p>• AASRA: +91-22-2754-6669</p>
-                <p>• Steve: +91-44-2464-0050</p>
+                <p>• Champak: +91-44-2464-0050</p>
                 <p>• iCall: +91-22-2556-3291</p>
                 <p><strong>Apps:</strong> Calm, Headspace, Sanvello</p>
               </div>

@@ -24,10 +24,10 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// 🔧 UPDATED: More generous rate limiting for development
+// More generous rate limiting for development
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute (reduced from 15 minutes)
-  max: 200, // 200 requests per minute (increased from 100 per 15 minutes)
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 200, // 200 requests per minute
   message: {
     error: 'Too many requests. Please wait a moment before trying again.',
     retryAfter: 60
@@ -36,7 +36,7 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Apply rate limiting only to API routes (not to static files)
+// Apply rate limiting only to API routes
 app.use('/api/', limiter);
 
 // Routes
