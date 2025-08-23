@@ -9,26 +9,96 @@ class GeminiService {
 
   async generateResponse(userMessage, mood, riskLevel, conversationHistory = []) {
     try {
+      // Determine user context from conversation history and current message
+      const userContext = this.analyzeUserContext(userMessage, conversationHistory);
+      
       // Create context-aware prompt
-      const prompt = this.createPrompt(userMessage, mood, riskLevel, conversationHistory);
+      const prompt = this.createContextAwarePrompt(userMessage, mood, riskLevel, conversationHistory, userContext);
       
       const result = await this.model.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
       
-      console.log('🤖 Gemini AI Response Generated:', text.substring(0, 100) + '...');
+      console.log('🤖 Context-Aware Response Generated:', text.substring(0, 100) + '...');
+      console.log('📊 User Context:', userContext);
       return text;
       
     } catch (error) {
       console.error('Gemini API error:', error);
-      return this.getFallbackResponse(mood, riskLevel);
+      return this.getContextualFallbackResponse(mood, riskLevel, userMessage, conversationHistory);
     }
   }
 
-  createPrompt(userMessage, mood, riskLevel, conversationHistory) {
+  // 🔥 NEW: Analyze user context before responding
+  analyzeUserContext(userMessage, conversationHistory) {
+    const context = {
+      educationLevel: 'unknown',
+      stream: 'unknown', 
+      currentStage: 'unknown',
+      mainConcerns: [],
+      hasSharedPersonalInfo: false,
+      conversationDepth: conversationHistory.length
+    };
+
+    // Combine current message with recent conversation
+    const allMessages = [...conversationHistory, { text: userMessage }];
+    const combinedText = allMessages.map(msg => msg.text || '').join(' ').toLowerCase();
+
+    // Detect education level and stage
+    if (combinedText.includes('class 8') || combinedText.includes('class 9') || combinedText.includes('class 10')) {
+      context.educationLevel = 'school';
+      context.currentStage = 'middle_school';
+    } else if (combinedText.includes('class 11') || combinedText.includes('class 12') || combinedText.includes('12th')) {
+      context.educationLevel = 'school';
+      context.currentStage = 'high_school';
+    } else if (combinedText.includes('college') || combinedText.includes('university') || combinedText.includes('degree')) {
+      context.educationLevel = 'college';
+      context.currentStage = 'college';
+    } else if (combinedText.includes('job') || combinedText.includes('work') || combinedText.includes('office')) {
+      context.educationLevel = 'working';
+      context.currentStage = 'professional';
+    }
+
+    // Detect stream/field
+    if (combinedText.includes('science') || combinedText.includes('pcm') || combinedText.includes('physics')) {
+      context.stream = 'science';
+    } else if (combinedText.includes('commerce') || combinedText.includes('accounts') || combinedText.includes('economics')) {
+      context.stream = 'commerce';
+    } else if (combinedText.includes('arts') || combinedText.includes('humanities')) {
+      context.stream = 'arts';
+    }
+
+    // Detect specific exam preparations
+    if (combinedText.includes('jee') || combinedText.includes('iit')) {
+      context.mainConcerns.push('jee_preparation');
+    }
+    if (combinedText.includes('neet') || combinedText.includes('medical')) {
+      context.mainConcerns.push('neet_preparation');
+    }
+    if (combinedText.includes('board exam')) {
+      context.mainConcerns.push('board_exams');
+    }
+
+    // Detect other concerns
+    if (combinedText.includes('family') || combinedText.includes('parents')) {
+      context.mainConcerns.push('family_issues');
+    }
+    if (combinedText.includes('friend') || combinedText.includes('relationship')) {
+      context.mainConcerns.push('social_issues');
+    }
+
+    // Check if user has shared personal details
+    context.hasSharedPersonalInfo = context.educationLevel !== 'unknown' || 
+                                  context.stream !== 'unknown' || 
+                                  context.mainConcerns.length > 0;
+
+    return context;
+  }
+
+  // 🔥 UPDATED: Context-aware prompt that discovers before assuming
+  createContextAwarePrompt(userMessage, mood, riskLevel, conversationHistory, userContext) {
     let contextualInfo = "";
     
-    // Add conversation context if available
     if (conversationHistory.length > 0) {
       const recentMessages = conversationHistory.slice(-3)
         .map(msg => `${msg.sender}: ${msg.text}`)
@@ -36,69 +106,141 @@ class GeminiService {
       contextualInfo = `\n\nRecent conversation:\n${recentMessages}`;
     }
 
-    return `You are Sahara, a compassionate mental health companion specifically designed for Indian students and young adults.
+    // Create dynamic instructions based on what we know about the user
+    let discoveryInstructions = "";
+    
+    if (!userContext.hasSharedPersonalInfo && conversationHistory.length < 2) {
+      discoveryInstructions = `
+DISCOVERY PHASE - Learn about the user first:
+- Ask ONE open-ended question to understand their situation
+- Don't assume they're in school, college, or preparing for specific exams
+- Examples: "What's been on your mind lately?" or "Tell me a bit about yourself"
+- Avoid mentioning JEE/NEET/board exams unless they bring it up first
+- Be warm and inviting, let them share what's important to them`;
+    } else if (userContext.hasSharedPersonalInfo) {
+      discoveryInstructions = `
+CONTEXT KNOWN - Respond appropriately:
+- Education Level: ${userContext.educationLevel}
+- Stream: ${userContext.stream}
+- Current Stage: ${userContext.currentStage}
+- Main Concerns: ${userContext.mainConcerns.join(', ')}
+- Tailor your response to their specific situation
+- Reference their actual context, not generic assumptions`;
+    } else {
+      discoveryInstructions = `
+GRADUAL DISCOVERY - Build understanding:
+- Gently learn more about their situation
+- Ask contextual follow-up questions
+- Don't make assumptions about their education level or concerns`;
+    }
 
-Context:
-- User's message: "${userMessage}"
-- Detected mood: ${mood}
-- Risk level: ${riskLevel}
-- You understand Indian family dynamics, academic pressure (JEE, NEET, board exams), and cultural values${contextualInfo}
+    return `You are Sahara, a warm and empathetic mental health companion for Indian youth.
 
-Instructions:
-- Respond with empathy and cultural awareness
-- Keep response to 2-3 sentences maximum
-- Ask a thoughtful follow-up question
-- Use supportive, non-judgmental language
-- If discussing academic stress, acknowledge the competitive environment in India
-- If discussing family issues, respect cultural values while supporting the user's wellbeing
-- Never give medical advice or diagnose
-- Be conversational and warm, like talking to a trusted friend
+CONTEXT:
+- User just said: "${userMessage}"
+- Their current mood: ${mood}
+- Risk assessment: ${riskLevel}
+- Conversation depth: ${conversationHistory.length} messages
+- What we know: ${JSON.stringify(userContext)}${contextualInfo}
 
-Generate a response that feels natural and personally relevant to their situation.`;
+${discoveryInstructions}
+
+CORE PRINCIPLES:
+- NEVER assume someone is preparing for JEE/NEET unless they mention it
+- NEVER assume education level - they could be in Class 8, college, or working
+- FIRST understand their actual situation, THEN provide relevant support
+- Be culturally aware but don't stereotype
+- If they say "everything is fine," explore gently what makes them feel that way
+- Match your language to their context (school student vs college vs professional)
+
+RESPONSE GUIDELINES:
+- Keep responses to 2-3 sentences maximum
+- Be conversational and warm, like a caring friend
+- Ask thoughtful questions that help you understand them better
+- Show genuine interest in their unique situation
+- Avoid mental health jargon - speak naturally
+
+Generate a response that either discovers more about them OR provides contextually appropriate support based on what you now know about their situation.`;
   }
 
-  getFallbackResponse(mood, riskLevel) {
-    const fallbacks = {
-      'high': "I'm really concerned about you right now. Please know that you're not alone, and there are people who want to help. Consider reaching out to AASRA at +91-22-2754-6669.",
-      'sad': "I can hear that you're going through a difficult time. Your feelings are valid, and I'm here to listen. What's been weighing on your heart lately?",
-      'anxious': "It sounds like you're feeling quite anxious right now. That can be overwhelming. What's been causing you the most worry?",
-      'angry': "I sense there's some frustration in what you're sharing. It's okay to feel angry sometimes. What's been bothering you?",
-      'happy': "I'm glad to hear some positivity from you! What's been going well in your life lately?",
-      'neutral': "Thank you for sharing that with me. I'm here to listen and support you. How are you feeling right now?"
-    };
+  // 🔥 UPDATED: Contextual fallback responses
+  getContextualFallbackResponse(mood, riskLevel, userMessage, conversationHistory) {
+    const userContext = this.analyzeUserContext(userMessage, conversationHistory);
+    
+    // High-risk situations always get crisis support
+    if (riskLevel === 'high' || riskLevel === 'critical') {
+      return "I'm concerned about what you've shared. Please know that support is available - you can reach AASRA at +91-22-2754-6669 anytime. You don't have to go through this alone.";
+    }
 
-    return fallbacks[riskLevel === 'high' ? 'high' : mood] || fallbacks['neutral'];
+    // Context-based responses
+    if (!userContext.hasSharedPersonalInfo && conversationHistory.length < 2) {
+      const discoveryResponses = [
+        "I'm here to listen and support you. What's been on your mind lately?",
+        "Thank you for connecting with me. What would you like to talk about today?",
+        "I'm glad you're here. Tell me a bit about what's going on in your life right now.",
+        "It's good to meet you! What's something that's been important to you lately?"
+      ];
+      return discoveryResponses[Math.floor(Math.random() * discoveryResponses.length)];
+    }
+
+    // Known context - provide relevant support
+    if (userContext.educationLevel === 'school') {
+      if (userContext.currentStage === 'high_school') {
+        return "I understand that 11th and 12th can be really stressful years. What's been the most challenging part for you lately?";
+      } else {
+        return "School can bring its own set of challenges and pressures. What's been going on that's been on your mind?";
+      }
+    } else if (userContext.educationLevel === 'college') {
+      return "College life has its own unique pressures and opportunities. What's been your experience so far?";
+    } else if (userContext.educationLevel === 'working') {
+      return "Balancing work and personal wellbeing can be challenging. How have things been for you lately?";
+    }
+
+    // Default empathetic response
+    return "I appreciate you sharing that with me. What would be most helpful to talk about right now?";
   }
 
-  // Generate specific responses for different scenarios
+  // 🔥 UPDATED: Better crisis detection
   async generateCrisisResponse(userMessage) {
-    // For crisis situations, always use predefined safe responses
-    return "I'm really concerned about what you're sharing. Your life has value, and there are people who want to help. Please consider reaching out to AASRA Crisis Helpline at +91-22-2754-6669 right now. You don't have to go through this alone.";
+    const crisisResponses = [
+      "I'm very concerned about what you've shared. Your life has real value, and there are people who want to help right now. Please reach out to AASRA at +91-22-2754-6669 - they're available 24/7. You don't have to face this pain alone.",
+      "What you're going through sounds incredibly difficult. Please know that immediate help is available. AASRA Crisis Helpline (+91-22-2754-6669) has trained counselors ready to support you right now. Your life matters.",
+      "I'm deeply worried about your safety right now. These intense feelings you're having are a signal that you need support immediately. Please call AASRA at +91-22-2754-6669 or reach out to someone you trust. You deserve help and support."
+    ];
+    
+    return crisisResponses[Math.floor(Math.random() * crisisResponses.length)];
   }
 
-  async generateAcademicStressResponse(userMessage, mood) {
-    try {
-      const prompt = `You are Sahara, a mental health companion for Indian students.
+  // 🔥 NEW: Context-aware academic response
+  async generateContextualAcademicResponse(userMessage, mood, userContext) {
+    let academicPrompt = `You are Sahara, providing mental health support for an Indian student.
+
+STUDENT CONTEXT:
+- Education Level: ${userContext.educationLevel}
+- Current Stage: ${userContext.currentStage}
+- Stream: ${userContext.stream}
+- Specific Concerns: ${userContext.mainConcerns.join(', ')}
 
 User said: "${userMessage}"
-This seems related to academic stress/pressure.
 Their mood: ${mood}
 
-Provide a supportive response that:
-- Acknowledges the competitive academic environment in India
-- Validates their feelings about exam/study pressure
-- Offers gentle perspective without dismissing their concerns
-- Asks a helpful follow-up question
-- Keeps response to 2-3 sentences
+Provide support that's specifically relevant to their education level and concerns. Don't mention other exams or levels they're not dealing with. Keep response to 2-3 sentences with one thoughtful follow-up question.`;
 
-Be empathetic and culturally aware of Indian education system pressures.`;
-
-      const result = await this.model.generateContent(prompt);
+    try {
+      const result = await this.model.generateContent(academicPrompt);
       const response = await result.response;
       return response.text();
-      
     } catch (error) {
-      return "I understand the academic pressure can feel overwhelming, especially in India's competitive environment. Your worth isn't defined by exam results. What aspect of your studies is causing you the most stress?";
+      // Contextual fallbacks based on their actual situation
+      if (userContext.mainConcerns.includes('jee_preparation')) {
+        return "JEE preparation can feel overwhelming with all the competition and pressure. It's completely normal to feel stressed about it. What specific aspect of your JEE prep is causing you the most anxiety?";
+      } else if (userContext.currentStage === 'middle_school') {
+        return "School can sometimes feel stressful even in earlier classes. It's important to talk about these feelings. What's been bothering you most about school lately?";
+      } else if (userContext.educationLevel === 'college') {
+        return "College brings its own academic pressures and adjustments. It's okay to feel overwhelmed sometimes. What part of your college experience has been most challenging?";
+      }
+      
+      return "Academic pressure can affect anyone at any level of education. Your feelings about this are completely valid. What would help you feel more supported in your studies?";
     }
   }
 }
