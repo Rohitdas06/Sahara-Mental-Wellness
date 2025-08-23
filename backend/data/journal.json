@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1755968152597,
+    "content": "happy happy 😄",
+    "date": "2025-08-23",
+    "prompt": "How did you connect with others today?",
+    "createdAt": "2025-08-23T16:55:52.597Z",
+    "mood": "happy",
+    "sentiment": 0.6666666666666666,
+    "riskLevel": "low",
+    "analysis": {
+      "mood": "happy",
+      "sentiment": "positive",
+      "sentimentScore": 0.6666666666666666,
+      "riskLevel": "low",
+      "keyThemes": [
+        "general"
+      ],
+      "moodEmoji": "😊",
+      "insights": "It's wonderful to see you feeling positive! These moments of joy are important to cherish."
+    }
+  }
+]
