@@ -138,7 +138,7 @@ function CrisisAlert({ isVisible, crisisData, onClose, onActionTaken }) {
             {!isCritical && (
               <button
                 onClick={() => {
-                  console.log('❌ Closing crisis alert');
+                  console.log('Closing crisis alert');
                   onClose();
                 }}
                 className="p-2 hover:bg-white/20 rounded-full transition-all duration-200 backdrop-blur-sm"
