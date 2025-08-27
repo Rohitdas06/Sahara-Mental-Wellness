@@ -10,33 +10,129 @@ const axios = require('axios');
 // Configure multer for file upload
 const upload = multer();
 
-// Store journal entries in memory (in production, use database)
-const journalEntries = new Map();
+// ✅ ENHANCED: Store journal entries with session isolation (in production, use database)
+const journalEntries = new Map(); // sessionId -> array of entries
 let entryIdCounter = 1;
 
-// Get all journal entries
-router.get('/entries', (req, res) => {
-  const entries = Array.from(journalEntries.values()).sort((a, b) => 
-    new Date(b.createdAt) - new Date(a.createdAt)
-  );
+// ✅ NEW: Session extraction middleware
+const extractSessionId = (req, res, next) => {
+  const sessionId = req.headers['x-session-id'];
+  const userId = req.headers['x-user-id'];
+  const isGuest = req.headers['x-is-guest'] === 'true';
   
-  res.json({
-    success: true,
-    entries: entries
-  });
+  if (!sessionId) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Missing X-Session-ID header' 
+    });
+  }
+  
+  req.sessionId = sessionId;
+  req.userId = userId;
+  req.isGuest = isGuest;
+  next();
+};
+
+// ✅ ENHANCED: Get journal entries filtered by session
+router.get('/entries', extractSessionId, (req, res) => {
+  try {
+    const sessionId = req.sessionId;
+    const sessionEntries = journalEntries.get(sessionId) || [];
+    
+    // Sort by creation date (newest first)
+    const sortedEntries = sessionEntries.sort((a, b) => 
+      new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    
+    console.log(`📖 Retrieved ${sortedEntries.length} journal entries for ${req.isGuest ? 'guest' : 'auth'} session: ${sessionId}`);
+    
+    res.json({
+      success: true,
+      entries: sortedEntries,
+      count: sortedEntries.length,
+      sessionId: sessionId,
+      userId: req.userId,
+      isGuest: req.isGuest
+    });
+  } catch (error) {
+    console.error('❌ Error retrieving journal entries:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve journal entries' 
+    });
+  }
 });
 
-// Voice transcription endpoint
-router.post('/transcribe', upload.single('audio'), async (req, res) => {
+// ✅ NEW: Clear all journal entries for a session
+router.delete('/clear-all', extractSessionId, (req, res) => {
+  try {
+    const sessionId = req.sessionId;
+    const beforeCount = journalEntries.get(sessionId)?.length || 0;
+    
+    // Delete all entries for this session
+    journalEntries.delete(sessionId);
+    
+    console.log(`✅ Cleared ${beforeCount} journal entries for session: ${sessionId}`);
+    
+    res.json({ 
+      success: true, 
+      message: `${beforeCount} journal entries cleared for session`,
+      deletedCount: beforeCount,
+      sessionId: sessionId,
+      userId: req.userId,
+      isGuest: req.isGuest
+    });
+  } catch (error) {
+    console.error('❌ Error clearing journal entries:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to clear journal entries' 
+    });
+  }
+});
+
+// ✅ NEW: End session (cleanup associated data)
+router.post('/end-session', extractSessionId, (req, res) => {
+  try {
+    const sessionId = req.sessionId;
+    const entriesCount = journalEntries.get(sessionId)?.length || 0;
+    
+    console.log(`📝 Journal session ended for: ${sessionId} (${entriesCount} entries exist)`);
+    
+    res.json({ 
+      success: true, 
+      message: `Journal session ended for: ${sessionId}`,
+      entriesCount: entriesCount,
+      sessionId: sessionId,
+      userId: req.userId,
+      isGuest: req.isGuest
+    });
+  } catch (error) {
+    console.error('❌ Error ending journal session:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to end journal session' 
+    });
+  }
+});
+
+// ✅ ENHANCED: Voice transcription endpoint with session logging
+router.post('/transcribe', extractSessionId, upload.single('audio'), async (req, res) => {
   try {
     const audioFile = req.file;
     if (!audioFile) {
-      return res.status(400).json({ error: 'No audio file provided' });
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No audio file provided' 
+      });
     }
 
     // Check if OpenAI API key is available
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'OpenAI API key not configured' });
+      return res.status(500).json({ 
+        success: false, 
+        error: 'OpenAI API key not configured' 
+      });
     }
 
     const formData = new FormData();
@@ -62,43 +158,58 @@ router.post('/transcribe', upload.single('audio'), async (req, res) => {
       config
     );
 
-    console.log('🎤 Voice transcription successful:', {
+    console.log(`🎤 Voice transcription successful for ${req.isGuest ? 'guest' : 'auth'} session ${req.sessionId}:`, {
       originalSize: audioFile.size,
-      transcribedText: response.data.text.substring(0, 100) + '...'
+      transcribedLength: response.data.text.length,
+      preview: response.data.text.substring(0, 100) + '...'
     });
 
     res.json({ 
       success: true, 
-      transcription: response.data.text 
+      transcription: response.data.text,
+      sessionId: req.sessionId,
+      userId: req.userId
     });
 
   } catch (error) {
-    console.error('Error transcribing audio:', error);
+    console.error(`❌ Error transcribing audio for session ${req.sessionId}:`, error);
     
     if (error.response) {
       // OpenAI API error
       res.status(error.response.status).json({ 
-        error: 'OpenAI API error: ' + error.response.data.error?.message || 'Unknown error'
+        success: false,
+        error: 'OpenAI API error: ' + (error.response.data.error?.message || 'Unknown error')
       });
     } else if (error.code === 'ECONNABORTED') {
       // Timeout error
-      res.status(408).json({ error: 'Request timeout. Please try with a shorter audio clip.' });
+      res.status(408).json({ 
+        success: false,
+        error: 'Request timeout. Please try with a shorter audio clip.' 
+      });
     } else {
       // Other errors
-      res.status(500).json({ error: 'Error transcribing audio. Please try again.' });
+      res.status(500).json({ 
+        success: false,
+        error: 'Error transcribing audio. Please try again.' 
+      });
     }
   }
 });
 
-// Create a new journal entry - Updated to match frontend expectations
-router.post('/save', async (req, res) => {
+// ✅ ENHANCED: Create journal entry with session isolation
+router.post('/save', extractSessionId, async (req, res) => {
   const { content, date, prompt } = req.body;
   
   if (!content || !content.trim()) {
-    return res.status(400).json({ error: 'Content is required' });
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Content is required' 
+    });
   }
 
   try {
+    const sessionId = req.sessionId;
+    
     // Analyze sentiment and mood for the journal entry
     const sentimentData = sentimentService.analyzeSentiment(content);
     const mood = sentimentService.determineMood(content, sentimentData);
@@ -110,6 +221,9 @@ router.post('/save', async (req, res) => {
       date: date || new Date().toISOString().split('T')[0],
       prompt: prompt || '',
       createdAt: new Date().toISOString(),
+      sessionId: sessionId, // ✅ Associate with session
+      userId: req.userId,   // ✅ Associate with user
+      isGuest: req.isGuest, // ✅ Track guest status
       mood: mood,
       sentiment: sentimentData.score,
       riskLevel: riskLevel,
@@ -124,13 +238,20 @@ router.post('/save', async (req, res) => {
       }
     };
 
-    journalEntries.set(entry.id, entry);
+    // ✅ ENHANCED: Store entry in session-specific array
+    if (!journalEntries.has(sessionId)) {
+      journalEntries.set(sessionId, []);
+    }
+    journalEntries.get(sessionId).push(entry);
 
-    console.log('📝 Journal Entry Analysis:', {
+    console.log(`📝 Journal entry saved for ${req.isGuest ? 'guest' : 'auth'} session ${sessionId}:`, {
+      entryId: entry.id,
+      userId: req.userId,
       mood: mood,
       sentiment: sentimentData.score,
       riskLevel: riskLevel,
-      preview: content.substring(0, 50) + '...'
+      contentLength: content.length,
+      totalEntries: journalEntries.get(sessionId).length
     });
 
     // Return in format expected by frontend
@@ -138,24 +259,34 @@ router.post('/save', async (req, res) => {
       success: true,
       entry: entry,
       analysis: entry.analysis,
-      message: 'Journal entry saved successfully'
+      message: 'Journal entry saved successfully',
+      sessionId: sessionId,
+      userId: req.userId,
+      isGuest: req.isGuest
     });
 
   } catch (error) {
-    console.error('Error processing journal entry:', error);
-    res.status(500).json({ error: 'Failed to process journal entry' });
+    console.error(`❌ Error processing journal entry for session ${req.sessionId}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to process journal entry' 
+    });
   }
 });
 
-// Keep original entry endpoint for compatibility
-router.post('/entry', async (req, res) => {
+// ✅ ENHANCED: Keep original entry endpoint for compatibility with session isolation
+router.post('/entry', extractSessionId, async (req, res) => {
   const { content, date } = req.body;
   
   if (!content || !content.trim()) {
-    return res.status(400).json({ error: 'Content is required' });
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Content is required' 
+    });
   }
 
   try {
+    const sessionId = req.sessionId;
     const sentimentData = sentimentService.analyzeSentiment(content);
     const mood = sentimentService.determineMood(content, sentimentData);
     const riskLevel = sentimentService.calculateRiskLevel(content, sentimentData);
@@ -165,12 +296,19 @@ router.post('/entry', async (req, res) => {
       content: content.trim(),
       date: date || new Date().toISOString().split('T')[0],
       createdAt: new Date().toISOString(),
+      sessionId: sessionId, // ✅ Associate with session
+      userId: req.userId,   // ✅ Associate with user
+      isGuest: req.isGuest, // ✅ Track guest status
       mood: mood,
       sentiment: sentimentData.score,
       riskLevel: riskLevel
     };
 
-    journalEntries.set(entry.id, entry);
+    // ✅ Store entry in session-specific array
+    if (!journalEntries.has(sessionId)) {
+      journalEntries.set(sessionId, []);
+    }
+    journalEntries.get(sessionId).push(entry);
 
     const analysis = {
       mood: mood,
@@ -179,41 +317,145 @@ router.post('/entry', async (req, res) => {
       keyThemes: extractKeyThemes(content)
     };
 
+    console.log(`📝 Journal entry saved (legacy endpoint) for session ${sessionId}`);
+
     res.json({
       success: true,
       entry: entry,
       analysis: analysis,
-      message: 'Journal entry saved successfully'
+      message: 'Journal entry saved successfully',
+      sessionId: sessionId
     });
 
   } catch (error) {
-    console.error('Error processing journal entry:', error);
-    res.status(500).json({ error: 'Failed to process journal entry' });
+    console.error(`❌ Error processing journal entry (legacy) for session ${req.sessionId}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to process journal entry' 
+    });
   }
 });
 
-// Get journal entry by date
-router.get('/entry/:date', (req, res) => {
-  const { date } = req.params;
-  const entry = Array.from(journalEntries.values()).find(e => e.date === date);
-  
-  if (entry) {
-    res.json({ success: true, entry });
-  } else {
-    res.status(404).json({ error: 'No entry found for this date' });
+// ✅ ENHANCED: Get journal entry by date with session filtering
+router.get('/entry/:date', extractSessionId, (req, res) => {
+  try {
+    const { date } = req.params;
+    const sessionId = req.sessionId;
+    const sessionEntries = journalEntries.get(sessionId) || [];
+    
+    // Find entry for this date in this session only
+    const entry = sessionEntries.find(e => e.date === date);
+    
+    if (entry) {
+      console.log(`📅 Retrieved journal entry for date ${date} in session ${sessionId}`);
+      res.json({ 
+        success: true, 
+        entry,
+        sessionId: sessionId
+      });
+    } else {
+      console.log(`📅 No journal entry found for date ${date} in session ${sessionId}`);
+      res.status(404).json({ 
+        success: false, 
+        error: 'No entry found for this date in current session' 
+      });
+    }
+  } catch (error) {
+    console.error(`❌ Error retrieving entry by date for session ${req.sessionId}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve journal entry' 
+    });
   }
 });
 
-// Delete journal entry
-router.delete('/:entryId', (req, res) => {
-  const { entryId } = req.params;
-  const entryExists = journalEntries.has(parseInt(entryId));
-  
-  if (entryExists) {
-    journalEntries.delete(parseInt(entryId));
-    res.json({ success: true, message: 'Entry deleted successfully' });
-  } else {
-    res.status(404).json({ error: 'Entry not found' });
+// ✅ ENHANCED: Delete journal entry with session filtering
+router.delete('/:entryId', extractSessionId, (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const sessionId = req.sessionId;
+    const sessionEntries = journalEntries.get(sessionId) || [];
+    
+    // Find entry index in this session only
+    const entryIndex = sessionEntries.findIndex(entry => entry.id === parseInt(entryId));
+    
+    if (entryIndex !== -1) {
+      // Remove the entry
+      const deletedEntry = sessionEntries.splice(entryIndex, 1)[0];
+      
+      // Update the map
+      journalEntries.set(sessionId, sessionEntries);
+      
+      console.log(`🗑️ Deleted journal entry ${entryId} from session ${sessionId}`);
+      
+      res.json({ 
+        success: true, 
+        message: 'Entry deleted successfully',
+        deletedEntry: {
+          id: deletedEntry.id,
+          date: deletedEntry.date,
+          preview: deletedEntry.content.substring(0, 50) + '...'
+        },
+        sessionId: sessionId,
+        remainingEntries: sessionEntries.length
+      });
+    } else {
+      console.log(`🗑️ Entry ${entryId} not found in session ${sessionId}`);
+      res.status(404).json({ 
+        success: false, 
+        error: 'Entry not found in current session' 
+      });
+    }
+  } catch (error) {
+    console.error(`❌ Error deleting entry ${req.params.entryId} for session ${req.sessionId}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to delete journal entry' 
+    });
+  }
+});
+
+// ✅ NEW: Get session statistics
+router.get('/stats', extractSessionId, (req, res) => {
+  try {
+    const sessionId = req.sessionId;
+    const sessionEntries = journalEntries.get(sessionId) || [];
+    
+    // Calculate statistics
+    const totalEntries = sessionEntries.length;
+    const moods = sessionEntries.map(entry => entry.mood);
+    const moodCounts = moods.reduce((acc, mood) => {
+      acc[mood] = (acc[mood] || 0) + 1;
+      return acc;
+    }, {});
+    
+    const averageSentiment = sessionEntries.length > 0 
+      ? sessionEntries.reduce((sum, entry) => sum + entry.sentiment, 0) / sessionEntries.length 
+      : 0;
+    
+    const riskLevels = sessionEntries.map(entry => entry.riskLevel);
+    const highRiskCount = riskLevels.filter(level => level === 'high').length;
+    
+    console.log(`📊 Retrieved statistics for session ${sessionId}: ${totalEntries} entries`);
+    
+    res.json({
+      success: true,
+      stats: {
+        totalEntries,
+        moodCounts,
+        averageSentiment: Math.round(averageSentiment * 100) / 100,
+        highRiskCount,
+        sessionId: sessionId,
+        userId: req.userId,
+        isGuest: req.isGuest
+      }
+    });
+  } catch (error) {
+    console.error(`❌ Error retrieving statistics for session ${req.sessionId}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve statistics' 
+    });
   }
 });
 
