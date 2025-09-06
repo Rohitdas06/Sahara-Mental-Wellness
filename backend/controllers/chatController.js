@@ -1,3 +1,6 @@
+// backend/controllers/chatController.js
+
+
 const sentimentService = require('../services/sentimentService');
 
 // ... inside your sendMessage route handler
