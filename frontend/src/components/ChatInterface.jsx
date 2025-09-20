@@ -3,9 +3,11 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Send, Bot, User, Loader2, Mic, MicOff, AlertTriangle, Shield } from "lucide-react";
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import Journal from "./Journal";
-import CrisisAlert from './CrisisAlert';
+import CrisisAlert from './crisisAlert';
 
-const BACKEND_URL = "http://localhost:3001";
+import { CURRENT_BACKEND_URL } from '../config';
+import apiService from '../services/apiService';
+const BACKEND_URL = CURRENT_BACKEND_URL;
 
 const PurpleHeartLogo = ({ className = "w-6 h-6" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -13,15 +15,26 @@ const PurpleHeartLogo = ({ className = "w-6 h-6" }) => (
   </svg>
 );
 
-// ✅ UPDATED: Add onResetChat prop to function signature
+//  UPDATED: Add onResetChat prop to function signature
 function ChatInterface({ 
   sessionId, 
   setSessionId, 
   setGlobalMoodData, 
   user, 
   sessionManager, 
-  onResetChat  // ✅ New prop for handling chat reset
+  onResetChat  //  New prop for handling chat reset
 }) {
+  // Debug session info
+  console.log('🔍 ChatInterface received props:', {
+    sessionId,
+    user,
+    sessionManager: {
+      sessionId: sessionManager.sessionId,
+      userId: sessionManager.userId,
+      isGuest: sessionManager.isGuest
+    }
+  });
+
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -46,11 +59,45 @@ function ChatInterface({
   const inputRef = useRef(null);
   const messagesContainerRef = useRef(null);
 
-  // ✅ UPDATED: clearSession function that uses parent reset
+  // Initialize session if not already done
+  useEffect(() => {
+    if (sessionId && user && (!sessionManager.sessionId || !sessionManager.userId)) {
+      console.log('🔄 Initializing session in ChatInterface:', {
+        sessionId,
+        userId: user.userId,
+        isGuest: user.isGuest
+      });
+      sessionManager.setSession(sessionId, user.userId, user.isGuest);
+    }
+  }, [sessionId, user, sessionManager]);
+
+  // Load chat history when component mounts
+  useEffect(() => {
+    const loadChatHistory = async () => {
+      if (sessionManager.sessionId && sessionManager.userId && !initialized) {
+        try {
+          console.log('📚 Loading chat history...');
+          const data = await apiService.getChatHistory(sessionManager.userId);
+          if (data.success && data.messages && data.messages.length > 0) {
+            console.log('📚 Loaded chat history:', data.messages.length, 'messages');
+            setMessages(data.messages);
+            setInitialized(true);
+            setIsConnected(true);
+          }
+        } catch (error) {
+          console.error('❌ Error loading chat history:', error);
+        }
+      }
+    };
+
+    loadChatHistory();
+  }, [sessionManager.sessionId, sessionManager.userId, initialized]);
+
+  //  UPDATED: clearSession function that uses parent reset
   const clearSession = useCallback(() => {
     console.log('🎙️ Triggering chat reset via parent...');
     if (onResetChat) {
-      onResetChat(); // ✅ This triggers the parent reset function
+      onResetChat(); //  This triggers the parent reset function
     } else {
       // Fallback if onResetChat is not provided
       console.warn('onResetChat prop not provided, using fallback reset');
@@ -97,15 +144,15 @@ function ChatInterface({
         resetTranscript();
       }
     },
-    // ✅ Clear Chat - Now uses parent reset function
+    //  Clear Chat - Now uses parent reset function
     {
       command: 'clear chat',
       callback: () => {
         console.log('🎙️ Voice command: Clear chat');
-        clearSession(); // ✅ This now properly resets everything
+        clearSession(); //  This now properly resets everything
       }
     },
-    // ✅ Open Journal
+    //  Open Journal
     {
       command: 'open journal',
       callback: () => {
@@ -113,7 +160,7 @@ function ChatInterface({
         setShowJournal(true);
       }
     },
-    // ✅ Close Journal
+    //  Close Journal
     {
       command: 'close journal',
       callback: () => {
@@ -206,49 +253,52 @@ function ChatInterface({
     setInitialized(true);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/chat/start`, {
-        method: "POST",
-        headers: sessionManager.getHeaders(),
-      });
+      // Check if session is properly initialized
+      if (!sessionManager.sessionId || !sessionManager.userId) {
+        console.error('❌ Session not properly initialized:', {
+          sessionId: sessionManager.sessionId,
+          userId: sessionManager.userId,
+          isGuest: sessionManager.isGuest
+        });
+        return;
+      }
 
-      const data = await response.json();
+      // Use API service for chat initialization
+      const data = await apiService.startChat(sessionManager.sessionId, sessionManager.userId);
 
       if (data.success) {
-        const newSessionId = response.headers.get('X-Session-ID') || data.sessionId;
-        if (newSessionId && newSessionId !== sessionId) {
-          setSessionId(newSessionId);
-          sessionManager.sessionId = newSessionId;
-        }
-
         setIsConnected(true);
 
-        // Enhanced welcome message
-        const welcomeMessage = {
-          id: Date.now(),
-          text: `Hello ${user?.username ? `, ${user.username}` : ''}! 👋
+        // Only show welcome message if no existing messages
+        if (messages.length === 0) {
+          // Enhanced welcome message
+          const welcomeMessage = {
+            id: Date.now(),
+            text: `Hello ${user?.username ? `, ${user.username}` : ''}! 👋
 
 I'm Sahara, your mental wellness companion. Welcome to your safe, private space where you can share anything that's on your mind.
 
 ${user?.isGuest ? 
-  '🔒 You\'re in a guest session - your conversations will be automatically cleared when you end the session for complete privacy.' : 
-  '🔐 You\'re in a private session - your data is completely isolated from other users and stays secure.'
+  ' You\'re in a guest session - your conversations will be automatically cleared when you end the session for complete privacy.' : 
+  ' You\'re in a private session - your data is completely isolated from other users and stays secure.'
 }
 
 I'm here to listen and support you. You can type your thoughts, use the voice feature by clicking the microphone, or explore your journal to reflect on your feelings.
 
 How are you feeling today? ❤️`,
-          sender: "ai",
-          timestamp: new Date().toISOString(),
-        };
-        
-        setMessages([welcomeMessage]);
+            sender: "ai",
+            timestamp: new Date().toISOString(),
+          };
+          
+          setMessages([welcomeMessage]);
+        }
         
         // Force scroll to show welcome message
         setTimeout(() => {
           setShouldScroll(true);
         }, 200);
 
-        console.log(`✅ Chat session initialized for ${user?.isGuest ? 'guest' : 'user'}: ${data.userId}`);
+        console.log(` Chat session initialized for ${user?.isGuest ? 'guest' : 'user'}: ${data.userId}`);
       }
     } catch (error) {
       console.error("Error initializing chat:", error);
@@ -274,7 +324,7 @@ How are you feeling today? ❤️`,
           setMessages(data.messages);
           setIsConnected(true);
           setTimeout(() => setShouldScroll(true), 100);
-          console.log(`✅ Chat history loaded for ${data.isGuest ? 'guest' : 'user'}: ${data.userId}`);
+          console.log(` Chat history loaded for ${data.isGuest ? 'guest' : 'user'}: ${data.userId}`);
         } else {
           // No history found, initialize new chat
           initializeChat();
@@ -465,16 +515,15 @@ How are you feeling today? ❤️`,
     }
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/chat/${sessionManager.sessionId}/message`, {
-        method: "POST",
-        headers: sessionManager.getHeaders(),
-        body: JSON.stringify({
-          text: cleanedMessage,
-          sender: "user",
-        }),
+      // Debug session info
+      console.log('🔍 Debug session info:', {
+        sessionId: sessionManager.sessionId,
+        userId: sessionManager.userId,
+        isGuest: sessionManager.isGuest
       });
-
-      const data = await response.json();
+      
+      // Use API service for sending messages
+      const data = await apiService.sendMessage(sessionManager.sessionId, cleanedMessage, sessionManager.userId);
 
       if (data.success) {
         if (data.messages) {
@@ -484,21 +533,20 @@ How are you feeling today? ❤️`,
         }
         setShouldScroll(true);
 
-        // Only use server mood data if local detection has low confidence
+        // Use mock API mood data
         if (data.mood || data.riskLevel || data.sentimentScore !== undefined) {
-          console.log('🌐 Server mood data received:', {
+          console.log('🌐 Mock API mood data received:', {
             mood: data.mood,
             riskLevel: data.riskLevel,
             sentimentScore: data.sentimentScore
           });
           
-          // Prioritize our local detection over server data
           setMoodData(prevMoodData => ({
-            mood: detectedMood.mood || data.mood || prevMoodData.mood,
-            riskLevel: detectedMood.riskLevel || data.riskLevel || prevMoodData.riskLevel,
-            moodHistory: [...prevMoodData.moodHistory],
-            sentimentScore: detectedMood.sentimentScore !== undefined ? detectedMood.sentimentScore : (data.sentimentScore !== undefined ? data.sentimentScore : prevMoodData.sentimentScore),
-            totalMessages: prevMoodData.totalMessages
+            mood: data.mood || prevMoodData.mood,
+            riskLevel: data.riskLevel || prevMoodData.riskLevel,
+            moodHistory: [...prevMoodData.moodHistory, data.mood],
+            sentimentScore: data.sentimentScore !== undefined ? data.sentimentScore : prevMoodData.sentimentScore,
+            totalMessages: prevMoodData.totalMessages + 1
           }));
         }
       }
@@ -590,7 +638,7 @@ How are you feeling today? ❤️`,
             >
               📝 Journal
             </button>
-            {/* ✅ New Chat button - Now properly clears everything */}
+            {/*  New Chat button - Now properly clears everything */}
             <button
               onClick={clearSession}
               className="text-xs text-blue-100 hover:text-white px-3 py-1 rounded-full border border-blue-200 hover:border-white transition-colors"
@@ -607,7 +655,7 @@ How are you feeling today? ❤️`,
         <div className="flex items-center justify-center space-x-2 text-green-700">
           <Shield className="w-4 h-4" />
           <p className="text-xs">
-            🔐 {user?.isGuest ? 'Guest' : 'Private'} session active for {user?.username || 'User'} - Data isolated from other users
+             {user?.isGuest ? 'Guest' : 'Private'} session active for {user?.username || 'User'} - Data isolated from other users
             {user?.isGuest && ' (auto-cleared on logout)'}
           </p>
         </div>

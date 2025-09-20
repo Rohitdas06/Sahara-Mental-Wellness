@@ -118,3 +118,4 @@ Thumbs.db
 backend/.env
 .env
 backend/.env
+.vercel

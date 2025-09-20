@@ -8,16 +8,19 @@ require('dotenv').config();
 
 const app = express();
 
-// ✅ ENHANCED: Session management with better isolation
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+//  ENHANCED: Session management with better isolation
 const sessions = new Map(); // authenticated sessions
 const guestSessions = new Set(); // guest session IDs
 const conversations = new Map(); // sessionId -> conversation history
 const userConversations = new Map(); // userId -> conversation history
 
-// ✅ NEW: Journal data storage (in-memory for demo - replace with your database)
+// NEW: Journal data storage (in-memory for demo - replace with your database)
 const journalEntries = new Map(); // sessionId -> array of journal entries
 
-// ✅ ENHANCED: Generate unique session IDs with better entropy
+//  ENHANCED: Generate unique session IDs with better entropy
 function generateSessionId(isGuest = false) {
   const timestamp = Date.now();
   const randomBytes = crypto.randomBytes(16).toString('hex');
@@ -25,7 +28,7 @@ function generateSessionId(isGuest = false) {
   return `${prefix}_${timestamp}_${randomBytes}`;
 }
 
-// ✅ ENHANCED: Session extraction middleware
+//  ENHANCED: Session extraction middleware
 const extractSessionId = (req, res, next) => {
   const sessionId = req.headers['x-session-id'];
   if (!sessionId) {
@@ -38,10 +41,24 @@ const extractSessionId = (req, res, next) => {
   next();
 };
 
-// ✅ ENHANCED: Auth middleware with better session management
+//  ENHANCED: Auth middleware with better session management
 const authMiddleware = (req, res, next) => {
+  // Bypass auth/session creation for health checks
+  if (req.method === 'HEAD' || req.path === '/api/health') {
+    return next();
+  }
+  // Skip non-API routes and preflight
+  if (!req.path || !req.path.startsWith('/api/') || req.method === 'OPTIONS') {
+    return next();
+  }
   // Get session ID from header
   let sessionId = req.headers['x-session-id'] || req.headers['authorization'];
+  
+  // Only create sessions when explicitly needed
+  const allowCreate = (req.path === '/api/session-info') || (req.path === '/api/chat/start' && req.method === 'POST');
+  if (!sessionId && !allowCreate) {
+    return next();
+  }
   
   if (!sessionId) {
     // Create new guest session with better ID generation
@@ -56,7 +73,9 @@ const authMiddleware = (req, res, next) => {
     // Return session ID to client
     res.setHeader('X-Session-ID', sessionId);
     
-    console.log(`👤 New guest session created: ${req.userId} | Session: ${sessionId}`);
+    if (process.env.DEBUG_SESSIONS === 'true') {
+      console.log(`👤 New guest session created: ${req.userId} | Session: ${sessionId}`);
+    }
   } else {
     // Check if it's a guest session
     if (guestSessions.has(sessionId)) {
@@ -81,33 +100,60 @@ const authMiddleware = (req, res, next) => {
       req.userId = `guest_${sessionId}`;
       res.setHeader('X-Session-ID', sessionId);
       
-      console.log(`👤 Invalid session, new guest created: ${req.userId} | Session: ${sessionId}`);
+      if (process.env.DEBUG_SESSIONS === 'true') {
+        console.log(`👤 Invalid session, new guest created: ${req.userId} | Session: ${sessionId}`);
+      }
     }
   }
   
   next();
 };
 
-// Middleware
-app.use(express.json());
-app.use(cors({
-  origin: true, // Allow all origins for development
+// // Middleware
+// app.use(express.json());
+
+// CORS configuration for production
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? [process.env.FRONTEND_URL, 'https://your-netlify-app.netlify.app'] // Replace with your actual Netlify URL
+    : true, // Allow all origins in development
   credentials: true,
   exposedHeaders: ['X-Session-ID'] // Expose session ID header to frontend
-}));
+};
 
-// Apply auth middleware to all routes
+app.use(cors(corsOptions));
+
+// Public health check (must be before auth middleware)
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    message: 'Backend is working!'
+  });
+});
+
+// Additional public liveness endpoints for Render probes and manual checks
+app.get('/', (req, res) => {
+  res.status(200).send('OK');
+});
+
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// Apply auth middleware to all routes (after public health)
 app.use(authMiddleware);
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ✅ ENHANCED: Journal routes with session isolation
+// ENHANCED: Journal routes with session isolation
 app.use('/api/journal', journalRoutes);
 
 // ===== NEW ENDPOINTS FOR COMPLETE DATA CLEARING =====
 
-// ✅ DELETE /api/journal/clear-all - Clear ALL journal entries for session
+//  DELETE /api/journal/clear-all - Clear ALL journal entries for session
 app.delete('/api/journal/clear-all', extractSessionId, async (req, res) => {
   try {
     const sessionId = req.sessionId;
@@ -116,7 +162,7 @@ app.delete('/api/journal/clear-all', extractSessionId, async (req, res) => {
     // Clear all journal entries for this session
     journalEntries.delete(sessionId);
     
-    console.log(`✅ Cleared ${beforeCount} journal entries for session: ${sessionId}`);
+    console.log(` Cleared ${beforeCount} journal entries for session: ${sessionId}`);
     
     res.json({ 
       success: true, 
@@ -125,7 +171,7 @@ app.delete('/api/journal/clear-all', extractSessionId, async (req, res) => {
       sessionId: sessionId
     });
   } catch (error) {
-    console.error('❌ Error clearing journal data:', error);
+    console.error(' Error clearing journal data:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to clear journal data' 
@@ -133,7 +179,7 @@ app.delete('/api/journal/clear-all', extractSessionId, async (req, res) => {
   }
 });
 
-// ✅ DELETE /api/chat/clear-all - Clear ALL chat messages for session
+// DELETE /api/chat/clear-all - Clear ALL chat messages for session
 app.delete('/api/chat/clear-all', extractSessionId, async (req, res) => {
   try {
     const sessionId = req.sessionId;
@@ -146,7 +192,7 @@ app.delete('/api/chat/clear-all', extractSessionId, async (req, res) => {
     // Also clear from conversations map if exists
     conversations.delete(sessionId);
     
-    console.log(`✅ Cleared ${beforeCount} chat messages for session: ${sessionId} | User: ${userId}`);
+    console.log(` Cleared ${beforeCount} chat messages for session: ${sessionId} | User: ${userId}`);
     
     res.json({ 
       success: true, 
@@ -156,7 +202,7 @@ app.delete('/api/chat/clear-all', extractSessionId, async (req, res) => {
       userId: userId
     });
   } catch (error) {
-    console.error('❌ Error clearing chat data:', error);
+    console.error(' Error clearing chat data:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to clear chat data' 
@@ -164,7 +210,7 @@ app.delete('/api/chat/clear-all', extractSessionId, async (req, res) => {
   }
 });
 
-// ✅ POST /api/journal/end-session - End journal session
+//  POST /api/journal/end-session - End journal session
 app.post('/api/journal/end-session', extractSessionId, async (req, res) => {
   try {
     const sessionId = req.sessionId;
@@ -176,7 +222,7 @@ app.post('/api/journal/end-session', extractSessionId, async (req, res) => {
       sessions.delete(sessionId);
     }
     
-    console.log(`📝 Journal session ended for: ${sessionId}`);
+    console.log(` Journal session ended for: ${sessionId}`);
     
     res.json({ 
       success: true, 
@@ -184,7 +230,7 @@ app.post('/api/journal/end-session', extractSessionId, async (req, res) => {
       sessionId: sessionId
     });
   } catch (error) {
-    console.error('❌ Error ending journal session:', error);
+    console.error(' Error ending journal session:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to end journal session' 
@@ -200,10 +246,31 @@ function getUserConversation(userId) {
   return userConversations.get(userId);
 }
 
-// ✅ ENHANCED: Chat routes with better user isolation
+//  ENHANCED: Chat routes with better user isolation
 app.post('/api/chat/:sessionId/message', async (req, res) => {
   try {
+    console.log('🔍 Chat message request received:', {
+      sessionId: req.params.sessionId,
+      body: req.body,
+      headers: req.headers,
+      contentType: req.get('Content-Type')
+    });
+    
     const { sessionId } = req.params;
+    
+    // Safety check for req.body
+    if (!req.body) {
+      console.error('❌ req.body is undefined:', {
+        sessionId,
+        headers: req.headers,
+        contentType: req.get('Content-Type')
+      });
+      return res.status(400).json({
+        success: false,
+        error: 'Request body is missing'
+      });
+    }
+    
     const { text } = req.body;
     const userId = req.userId;
 
@@ -256,7 +323,7 @@ Respond naturally and empathetically, building on our conversation:`;
       timestamp: new Date().toISOString()
     }));
 
-    console.log(`💬 Chat message processed for ${req.isGuest ? 'guest' : 'user'}: ${userId}`);
+    console.log(`Chat message processed for ${req.isGuest ? 'guest' : 'user'}: ${userId}`);
 
     res.json({
       success: true,
@@ -288,7 +355,7 @@ app.post('/api/chat/start', (req, res) => {
     userConversations.set(userId, []);
   }
   
-  console.log(`🎯 Chat session started for ${req.isGuest ? 'guest' : 'user'}: ${userId}`);
+  console.log(` Chat session started for ${req.isGuest ? 'guest' : 'user'}: ${userId}`);
   
   res.json({
     success: true,
@@ -299,7 +366,7 @@ app.post('/api/chat/start', (req, res) => {
   });
 });
 
-// ✅ ENHANCED: End session and clear data (improved for both guests and users)
+//  ENHANCED: End session and clear data (improved for both guests and users)
 app.post('/api/chat/end-session', (req, res) => {
   try {
     const userId = req.userId;
@@ -332,7 +399,7 @@ app.post('/api/chat/end-session', (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Error ending chat session:', error);
+    console.error(' Error ending chat session:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to end chat session' 
@@ -363,7 +430,7 @@ app.get('/api/chat/history', (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error retrieving chat history:', error);
+    console.error(' Error retrieving chat history:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to retrieve chat history' 
@@ -371,7 +438,7 @@ app.get('/api/chat/history', (req, res) => {
   }
 });
 
-// ✅ ENHANCED: Get session info with better details
+//  ENHANCED: Get session info with better details
 app.get('/api/session-info', (req, res) => {
   res.json({
     success: true,
@@ -386,7 +453,7 @@ app.get('/api/session-info', (req, res) => {
   });
 });
 
-// ✅ ENHANCED: Create authenticated user session with unique session ID
+//  ENHANCED: Create authenticated user session with unique session ID
 app.post('/api/auth/login', (req, res) => {
   const { username, password, timestamp, randomId } = req.body;
   
@@ -402,7 +469,7 @@ app.post('/api/auth/login', (req, res) => {
       lastAccessed: new Date()
     });
 
-    console.log(`🔐 User authenticated: ${userId} | Session: ${sessionId}`);
+    console.log(` User authenticated: ${userId} | Session: ${sessionId}`);
 
     // Set session header
     res.setHeader('X-Session-ID', sessionId);
@@ -423,7 +490,7 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
-// ✅ ENHANCED: Logout with complete data clearing
+// ENHANCED: Logout with complete data clearing
 app.post('/api/auth/logout', (req, res) => {
   const sessionId = req.sessionId;
   const userId = req.userId;
@@ -446,7 +513,7 @@ app.post('/api/auth/logout', (req, res) => {
       guestSessions.delete(sessionId);
     }
     
-    console.log(`🔓 Complete logout for ${userId}: ${chatCount} chat messages + ${journalCount} journal entries cleared`);
+    console.log(` Complete logout for ${userId}: ${chatCount} chat messages + ${journalCount} journal entries cleared`);
     
     res.json({
       success: true,
@@ -457,7 +524,7 @@ app.post('/api/auth/logout', (req, res) => {
       userId: userId
     });
   } catch (error) {
-    console.error('❌ Error during logout:', error);
+    console.error(' Error during logout:', error);
     res.status(500).json({
       success: false,
       error: 'Logout failed'
@@ -491,7 +558,7 @@ function getSentimentScore(mood) {
   return scores[mood] || 0;
 }
 
-// ✅ ENHANCED: Cleanup function with better session management
+// ENHANCED: Cleanup function with better session management
 function cleanupExpiredSessions() {
   const now = new Date();
   const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
@@ -563,17 +630,24 @@ function cleanupExpiredSessions() {
 // Run cleanup every hour
 setInterval(cleanupExpiredSessions, 60 * 60 * 1000);
 
+// Start server for production deployment
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 Sahara AI Server running on http://localhost:${PORT}`);
-  console.log('📝 Journal API available at /api/journal');
+  console.log(`🚀 Sahara AI Server running on port ${PORT}`);
+  console.log('📖 Journal API available at /api/journal');
   console.log('💬 Chat API available at /api/chat');
   console.log('🔐 Enhanced session management enabled');
-  console.log('👤 Complete session isolation for guest and authenticated users');
+  console.log('👥 Complete session isolation for guest and authenticated users');
   console.log('🧹 Auto-cleanup enabled for expired sessions');
   
-  // ✅ NEW: Log available clearing endpoints
-  console.log('\n📋 Data clearing endpoints:');
+  console.log('\n📋 Available endpoints:');
+  console.log('   GET    /api/health - Health check');
+  console.log('   GET    /api/session-info - Get session info');
+  console.log('   POST   /api/chat/start - Start chat');
+  console.log('   POST   /api/chat/:sessionId/message - Send message');
+  console.log('   GET    /api/chat/history - Get chat history');
+  console.log('   GET    /api/journal/entries - Get journal entries');
+  console.log('   POST   /api/journal/save - Save journal entry');
   console.log('   DELETE /api/journal/clear-all - Clear journal entries');
   console.log('   DELETE /api/chat/clear-all - Clear chat messages');
   console.log('   POST   /api/journal/end-session - End journal session');

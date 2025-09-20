@@ -5,7 +5,9 @@ import ChatInterface from './components/ChatInterface';
 import MoodTracker from './components/MoodTracker';
 import './index.css';
 
-const BACKEND_URL = "http://localhost:3001";
+import { CURRENT_BACKEND_URL } from './config';
+import apiService from './services/apiService';
+const BACKEND_URL = CURRENT_BACKEND_URL;
 
 // ✅ ENHANCED: Session management utilities with better isolation
 class SessionManager {
@@ -198,57 +200,40 @@ function App() {
     clearAllApplicationData();
     
     try {
-      let response;
-      const timestamp = Date.now();
-      const randomId = Math.random().toString(36).substring(2, 10);
+      let data;
       
       if (isGuestUser) {
-        // Guest login - backend creates session automatically
-        response = await fetch(`${BACKEND_URL}/api/session-info?t=${timestamp}&r=${randomId}`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' }
-        });
+        // Use API service for guest login
+        data = await apiService.getSessionInfo();
       } else {
-        // Regular user login 
-        response = await fetch(`${BACKEND_URL}/api/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            username, 
-            password: 'temp_password',
-            timestamp,
-            randomId
-          })
-        });
+        // Use API service for regular user login
+        data = await apiService.getSessionInfo();
+        data.username = username;
+        data.isGuest = false;
       }
 
-      if (response.ok) {
-        const data = await response.json();
-        const newSessionId = response.headers.get('X-Session-ID') || data.sessionId;
-        const userId = data.userId;
-        const isGuest = data.isGuest !== undefined ? data.isGuest : isGuestUser;
+      const newSessionId = data.sessionId;
+      const userId = data.userId;
+      const isGuest = data.isGuest;
 
-        // Update session manager
-        SessionManager.setSession(newSessionId, userId, isGuest);
-        
-        setSessionId(newSessionId);
-        setSessionInfo(data);
-        setUser({ 
-          username, 
-          loginTime: new Date().toISOString(),
-          isAnonymous: true,
-          isGuest: isGuest,
-          userId: userId,
-          sessionId: newSessionId // ✅ Add sessionId to user object for debugging
-        });
+      // Update session manager
+      SessionManager.setSession(newSessionId, userId, isGuest);
+      
+      setSessionId(newSessionId);
+      setSessionInfo(data);
+      setUser({ 
+        username, 
+        loginTime: new Date().toISOString(),
+        isAnonymous: true,
+        isGuest: isGuest,
+        userId: userId,
+        sessionId: newSessionId
+      });
 
-        console.log(`✅ NEW Session created - ${isGuest ? 'Guest' : 'Auth'}: ${userId}`);
-        console.log(`📋 Session ID: ${newSessionId}`);
-        
-        return { success: true, sessionId: newSessionId, userId, isGuest };
-      } else {
-        console.error('❌ Session initialization failed:', response.status, response.statusText);
-      }
+      console.log(`✅ NEW Session created - ${isGuest ? 'Guest' : 'Auth'}: ${userId}`);
+      console.log(`📋 Session ID: ${newSessionId}`);
+      
+      return { success: true, sessionId: newSessionId, userId, isGuest };
     } catch (error) {
       console.error('❌ Error initializing session:', error);
     }
@@ -356,6 +341,16 @@ function App() {
   // ✅ ENHANCED: Load session on app startup
   useEffect(() => {
     const savedSession = SessionManager.loadSession();
+    console.log('🔍 Session restoration check:', {
+      savedSession,
+      user,
+      sessionManager: {
+        sessionId: SessionManager.sessionId,
+        userId: SessionManager.userId,
+        isGuest: SessionManager.isGuest
+      }
+    });
+    
     if (savedSession && !user) {
       console.log('🔄 Restoring session from storage...');
       setSessionId(savedSession.sessionId);

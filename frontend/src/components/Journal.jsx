@@ -2,7 +2,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Calendar, Edit3, Trash2, Plus, Brain, Save, Mic, MicOff, Volume2, Shield } from "lucide-react";
 
-const BACKEND_URL = "http://localhost:3001";
+import { CURRENT_BACKEND_URL } from '../config';
+import apiService from '../services/apiService';
+const BACKEND_URL = CURRENT_BACKEND_URL;
 
 function Journal({ user, sessionManager }) {
   const [entries, setEntries] = useState([]);
@@ -118,18 +120,11 @@ function Journal({ user, sessionManager }) {
     if (!user || !sessionManager) return;
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/journal/entries`, {
-        headers: sessionManager.getHeaders(),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const loadedEntries = data.entries || [];
-        setEntries(loadedEntries);
-        console.log(`✅ Journal: Loaded ${loadedEntries.length} entries`);
-      } else {
-        setEntries([]);
-      }
+      // Use API service for loading entries
+      const data = await apiService.getJournalEntries(sessionManager.sessionId);
+      const loadedEntries = data.entries || [];
+      setEntries(loadedEntries);
+      console.log(`✅ Journal: Loaded ${loadedEntries.length} entries`);
     } catch (error) {
       console.error("❌ Journal: Error loading entries:", error);
       setEntries([]);
@@ -141,18 +136,15 @@ function Journal({ user, sessionManager }) {
 
     setIsAnalyzing(true);
     try {
-      const response = await fetch(`${BACKEND_URL}/api/journal/save`, {
-        method: "POST",
-        headers: sessionManager.getHeaders(),
-        body: JSON.stringify({
-          content: currentEntry,
-          date: selectedDate,
-          prompt: dailyPrompt,
-        }),
-      });
+      // Use API service for saving entries
+      const data = await apiService.saveJournalEntry(
+        sessionManager.sessionId,
+        currentEntry,
+        selectedDate,
+        dailyPrompt
+      );
 
-      if (response.ok) {
-        const data = await response.json();
+      if (data.success) {
         setEntries((prev) => [data.entry, ...prev]);
         setEntryAnalysis(data.analysis || null);
         setCurrentEntry("");
